@@ -18,6 +18,8 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"github.com/prometheus/common/log"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,10 +40,19 @@ type DemoReconciler struct {
 // +kubebuilder:rbac:groups=demo.packy.io,resources=demoes/status,verbs=get;update;patch
 
 func (r *DemoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	_ = context.Background()
+	ctx := context.Background()
 	_ = r.Log.WithValues("demo", req.NamespacedName)
 
-	// your logic here
+	demo := &demov1.Demo{}
+	if err := r.Get(ctx, req.NamespacedName, demo); err != nil {
+		log.Error(err, "unable to fetch vm")
+	} else {
+		demo.Status.Status = "Running"
+		if err := r.Status().Update(ctx, demo); err != nil {
+			log.Error(err, "unable update status")
+		}
+		fmt.Println(demo.Spec.Strs)
+	}
 
 	return ctrl.Result{}, nil
 }

@@ -29,13 +29,15 @@ type DemoSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of Demo. Edit Demo_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	Strs  string `json:"foo,omitempty"`
+	Image string `json:"image"`
 }
 
 // DemoStatus defines the observed state of Demo
 type DemoStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Status string `json:"status"`
 }
 
 // +kubebuilder:object:root=true
