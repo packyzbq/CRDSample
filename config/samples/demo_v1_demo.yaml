@@ -1,0 +1,7 @@
+apiVersion: demo.packy.io/v1
+kind: Demo
+metadata:
+  name: demo-sample
+spec:
+  # Add fields here
+  foo: bar

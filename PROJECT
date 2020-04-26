@@ -1,0 +1,7 @@
+domain: packy.io
+repo: github.com/CRDSample
+resources:
+- group: demo
+  kind: Demo
+  version: v1
+version: "2"
