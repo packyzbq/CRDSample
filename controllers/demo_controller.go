@@ -18,47 +18,185 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 	"github.com/prometheus/common/log"
+	v1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 
+	demov1 "github.com/CRDSample/api/v1"
 	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
 
-	demov1 "github.com/CRDSample/api/v1"
+var (
+	deployOwnerKey = ".metadata.controller"
+	apiGV          = demov1.GroupVersion
 )
 
 // DemoReconciler reconciles a Demo object
 type DemoReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	Log      logr.Logger
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=demo.packy.io,resources=demoes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=demo.packy.io,resources=demoes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=demo.packy.io,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 func (r *DemoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
-	_ = r.Log.WithValues("demo", req.NamespacedName)
+	logs := r.Log.WithValues("demo", req.NamespacedName)
 
 	demo := &demov1.Demo{}
 	if err := r.Get(ctx, req.NamespacedName, demo); err != nil {
-		log.Error(err, "unable to fetch vm")
-	} else {
-		demo.Status.Status = "Running"
+		log.Error(err, ": unable to fetch demo, clean up old deployment")
+		r.cleanupOwneredDeployment(ctx, logs, demo)
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if demo.Status.Status == "" {
+		demo.Status.Status = "Created"
 		if err := r.Status().Update(ctx, demo); err != nil {
-			log.Error(err, "unable update status")
+			log.Error(err, ":unable update status")
 		}
-		fmt.Println(demo.Spec.Strs)
+		r.Recorder.Event(demo, "Normal", "Created", "example something")
+		// Create deployment
+		deployment := &v1.Deployment{}
+		err := r.Get(ctx, client.ObjectKey{Name: demo.Name + "-deploy", Namespace: demo.Namespace}, deployment)
+		if apierrors.IsNotFound(err) {
+			logs.Info("cannot find deployment, create one...")
+			deployment = buildDeployment(*demo)
+			if err := r.Client.Create(ctx, deployment); err != nil {
+				logs.Error(err, "failed to create Deployment")
+				r.Recorder.Event(demo, "Error", "Deploy", err.Error())
+				return ctrl.Result{}, err
+			}
+
+			r.Recorder.Eventf(demo, corev1.EventTypeNormal, "Created", "Created deployment %q", deployment.Name)
+			logs.Info("create deploy for demo")
+			return ctrl.Result{}, nil
+		}
+		logs.Info("deploy already exists, checking replica count")
+		expectedReplicas := demo.Spec.Replicas
+		if deployment.Spec.Replicas != &expectedReplicas {
+			logs.Info("updating replica count", "old_count", *deployment.Spec.Replicas, "new_count", expectedReplicas)
+			deployment.Spec.Replicas = &expectedReplicas
+			if err := r.Client.Update(ctx, deployment); err != nil {
+				log.Error(err, "failed to Deployment update replica count")
+				return ctrl.Result{}, err
+			}
+
+			r.Recorder.Eventf(demo, corev1.EventTypeNormal, "Scaled", "Scaled deployment %q to %d replicas", deployment.Name, expectedReplicas)
+		}
+
+	} else {
+		deployment := &v1.Deployment{}
+		err := r.Get(ctx, client.ObjectKey{Name: demo.Name + "-deploy", Namespace: demo.Namespace}, deployment)
+		if err != nil {
+			logs.Error(err, "cannot get deployment")
+			return ctrl.Result{}, err
+		}
+		if deployment.Status.UnavailableReplicas >= 1 {
+			r.Recorder.Eventf(demo, corev1.EventTypeWarning, "Deployment Error", "Deployment unavalible >= 1")
+		}
 	}
 
 	return ctrl.Result{}, nil
 }
 
 func (r *DemoReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(&v1.Deployment{}, deployOwnerKey, func(rawObj runtime.Object) []string {
+		// grab the Deployment object, extract the owner...
+		depl := rawObj.(*v1.Deployment)
+		owner := metav1.GetControllerOf(depl)
+		if owner == nil {
+			return nil
+		}
+		// ...make sure it's a MyKind...
+		if owner.APIVersion != apiGV.String() || owner.Kind != "MyKind" {
+			return nil
+		}
+
+		// ...and if so, return it
+		return []string{owner.Name}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&demov1.Demo{}).
+		Owns(&v1.Deployment{}).
 		Complete(r)
+}
+
+func (r *DemoReconciler) cleanupOwneredDeployment(ctx context.Context, log logr.Logger, demo *demov1.Demo) error {
+	log.Info("finding existing Deployments for MyKind resource")
+
+	// List all deployment resources owned by this MyKind
+	var deployments v1.DeploymentList
+	if err := r.List(ctx, &deployments, client.InNamespace(demo.Namespace), client.MatchingField(deployOwnerKey, demo.Name)); err != nil {
+		return err
+	}
+
+	deleted := 0
+	for _, depl := range deployments.Items {
+		if depl.Name == demo.Name+"-deploy" {
+			// If this deployment's name matches the one on the MyKind resource
+			// then do not delete it.
+			continue
+		}
+
+		if err := r.Client.Delete(ctx, &depl); err != nil {
+			log.Error(err, "failed to delete Deployment resource")
+			return err
+		}
+
+		r.Recorder.Eventf(demo, corev1.EventTypeNormal, "Deleted", "Deleted deployment %q", depl.Name)
+		deleted++
+	}
+
+	log.Info("finished cleaning up old Deployment resources", "number_deleted", deleted)
+
+	return nil
+}
+
+func buildDeployment(demo demov1.Demo) *v1.Deployment {
+	deployment := v1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            demo.Name + "-deploy",
+			Namespace:       demo.Namespace,
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(&demo, apiGV.WithKind("Demo"))},
+		},
+		Spec: v1.DeploymentSpec{
+			Replicas: &demo.Spec.Replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "demo-deploy",
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": "demo-deploy",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "nginx",
+							Image: demo.Spec.Image,
+						},
+					},
+				},
+			},
+		},
+	}
+	return &deployment
 }

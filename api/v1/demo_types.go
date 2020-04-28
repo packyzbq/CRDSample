@@ -29,8 +29,9 @@ type DemoSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of Demo. Edit Demo_types.go to remove/update
-	Strs  string `json:"foo,omitempty"`
-	Image string `json:"image"`
+	Strs     string `json:"foo,omitempty"`
+	Image    string `json:"image"`
+	Replicas int32  `json:"replicas"`
 }
 
 // DemoStatus defines the observed state of Demo
@@ -43,6 +44,7 @@ type DemoStatus struct {
 // +kubebuilder:object:root=true
 
 // Demo is the Schema for the demoes API
+// +kubebuilder:subresource:status
 type Demo struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
