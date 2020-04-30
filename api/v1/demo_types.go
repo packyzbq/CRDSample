@@ -32,6 +32,7 @@ type DemoSpec struct {
 	Strs     string `json:"foo,omitempty"`
 	Image    string `json:"image"`
 	Replicas int32  `json:"replicas"`
+	App      string `json: app`
 }
 
 // DemoStatus defines the observed state of Demo

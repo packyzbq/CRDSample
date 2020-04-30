@@ -57,9 +57,32 @@ func (r *DemoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	demo := &demov1.Demo{}
 	if err := r.Get(ctx, req.NamespacedName, demo); err != nil {
-		log.Error(err, ": unable to fetch demo, clean up old deployment")
-		r.cleanupOwneredDeployment(ctx, logs, demo)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	myFinalizerName := "demo.finalizers.packy.io"
+
+	if demo.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !containsString(demo.ObjectMeta.Finalizers, myFinalizerName) {
+			demo.ObjectMeta.Finalizers = append(demo.ObjectMeta.Finalizers, myFinalizerName)
+			if err := r.Update(context.Background(), demo); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		if containsString(demo.ObjectMeta.Finalizers, myFinalizerName) {
+			if err := r.cleanupOwneredDeployment(ctx, logs, demo); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// remove our finalizer from the list and update it.
+			demo.ObjectMeta.Finalizers = removeString(demo.ObjectMeta.Finalizers, myFinalizerName)
+			if err := r.Update(context.Background(), demo); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+
+		// Stop reconciliation as the item is being deleted
+		return ctrl.Result{}, nil
 	}
 	if demo.Status.Status == "" {
 		demo.Status.Status = "Created"
@@ -199,4 +222,23 @@ func buildDeployment(demo demov1.Demo) *v1.Deployment {
 		},
 	}
 	return &deployment
+}
+
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+func removeString(slice []string, s string) (result []string) {
+	for _, item := range slice {
+		if item == s {
+			continue
+		}
+		result = append(result, item)
+	}
+	return
 }
