@@ -18,11 +18,13 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"github.com/prometheus/common/log"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	demov1 "github.com/CRDSample/api/v1"
 	"github.com/go-logr/logr"
@@ -54,7 +56,7 @@ type DemoReconciler struct {
 func (r *DemoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	logs := r.Log.WithValues("demo", req.NamespacedName)
-
+	fmt.Println("--------------------------------")
 	demo := &demov1.Demo{}
 	if err := r.Get(ctx, req.NamespacedName, demo); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -155,7 +157,7 @@ func (r *DemoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&demov1.Demo{}).
-		Owns(&v1.Deployment{}).
+		Watches(&source.Kind{Type: &demov1.Demo{}}, &CrdEventHandler{}).
 		Complete(r)
 }
 
