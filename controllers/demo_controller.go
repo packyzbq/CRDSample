@@ -18,20 +18,19 @@ package controllers
 
 import (
 	"context"
-	"fmt"
+	demov1 "github.com/CRDSample/api/v1"
+	"github.com/go-logr/logr"
 	"github.com/prometheus/common/log"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/source"
-
-	demov1 "github.com/CRDSample/api/v1"
-	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 var (
@@ -56,7 +55,7 @@ type DemoReconciler struct {
 func (r *DemoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	logs := r.Log.WithValues("demo", req.NamespacedName)
-	fmt.Println("--------------------------------")
+	logs.Info("---GET Request for " + req.Name)
 	demo := &demov1.Demo{}
 	if err := r.Get(ctx, req.NamespacedName, demo); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -94,7 +93,7 @@ func (r *DemoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		r.Recorder.Event(demo, "Normal", "Created", "example something")
 		// Create deployment
 		deployment := &v1.Deployment{}
-		err := r.Get(ctx, client.ObjectKey{Name: demo.Name + "-deploy", Namespace: demo.Namespace}, deployment)
+		err := r.Get(ctx, client.ObjectKey{Name: demo.Spec.DeployNew.Name, Namespace: demo.Namespace}, deployment)
 		if apierrors.IsNotFound(err) {
 			logs.Info("cannot find deployment, create one...")
 			deployment = buildDeployment(*demo)
@@ -109,7 +108,7 @@ func (r *DemoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 		logs.Info("deploy already exists, checking replica count")
-		expectedReplicas := demo.Spec.Replicas
+		expectedReplicas := demo.Spec.DeployNew.Replicas
 		if deployment.Spec.Replicas != &expectedReplicas {
 			logs.Info("updating replica count", "old_count", *deployment.Spec.Replicas, "new_count", expectedReplicas)
 			deployment.Spec.Replicas = &expectedReplicas
@@ -123,7 +122,7 @@ func (r *DemoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	} else {
 		deployment := &v1.Deployment{}
-		err := r.Get(ctx, client.ObjectKey{Name: demo.Name + "-deploy", Namespace: demo.Namespace}, deployment)
+		err := r.Get(ctx, client.ObjectKey{Name: demo.Spec.DeployNew.Name, Namespace: demo.Namespace}, deployment)
 		if err != nil {
 			logs.Error(err, "cannot get deployment")
 			return ctrl.Result{}, err
@@ -157,7 +156,9 @@ func (r *DemoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&demov1.Demo{}).
-		Watches(&source.Kind{Type: &demov1.Demo{}}, &CrdEventHandler{}).
+		Watches(&source.Kind{Type: &v1.Deployment{}}, &handler.EnqueueRequestForObject{}).
+		//For(&v1.Deployment{}).
+		WithEventFilter(&ResourceAnnotationPredicate{}).
 		Complete(r)
 }
 
@@ -165,42 +166,41 @@ func (r *DemoReconciler) cleanupOwneredDeployment(ctx context.Context, log logr.
 	log.Info("finding existing Deployments for MyKind resource")
 
 	// List all deployment resources owned by this MyKind
-	var deployments v1.DeploymentList
-	if err := r.List(ctx, &deployments, client.InNamespace(demo.Namespace), client.MatchingField(deployOwnerKey, demo.Name)); err != nil {
+	var depitem demov1.DeploySepc
+	if demo.Spec.DeployOld.Final {
+		depitem = demo.Spec.DeployOld
+	} else {
+		depitem = demo.Spec.DeployNew
+	}
+
+	dep := &v1.Deployment{}
+	err := r.Get(ctx, client.ObjectKey{Name: depitem.Name, Namespace: demo.Namespace}, dep)
+	if err != nil {
+		log.Error(err, "Do not find deployment "+depitem.Name)
+		r.Recorder.Eventf(demo, corev1.EventTypeWarning, "Finalize", "Deleted deployment %q error", depitem.Name)
+		return err
+	}
+	if err := r.Client.Delete(ctx, dep); err != nil {
+		log.Error(err, "failed to delete Deployment resource")
 		return err
 	}
 
-	deleted := 0
-	for _, depl := range deployments.Items {
-		if depl.Name == demo.Name+"-deploy" {
-			// If this deployment's name matches the one on the MyKind resource
-			// then do not delete it.
-			continue
-		}
-
-		if err := r.Client.Delete(ctx, &depl); err != nil {
-			log.Error(err, "failed to delete Deployment resource")
-			return err
-		}
-
-		r.Recorder.Eventf(demo, corev1.EventTypeNormal, "Deleted", "Deleted deployment %q", depl.Name)
-		deleted++
-	}
-
-	log.Info("finished cleaning up old Deployment resources", "number_deleted", deleted)
+	r.Recorder.Eventf(demo, corev1.EventTypeNormal, "Deleted", "Deleted deployment %q", depitem.Name)
 
 	return nil
 }
 
 func buildDeployment(demo demov1.Demo) *v1.Deployment {
+	annotations := make(map[string]string)
+	annotations[gray_annotation] = ""
 	deployment := v1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            demo.Name + "-deploy",
-			Namespace:       demo.Namespace,
-			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(&demo, apiGV.WithKind("Demo"))},
+			Name:        demo.Spec.DeployNew.Name,
+			Namespace:   demo.Namespace,
+			Annotations: annotations,
 		},
 		Spec: v1.DeploymentSpec{
-			Replicas: &demo.Spec.Replicas,
+			Replicas: &demo.Spec.DeployNew.Replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"app": "demo-deploy",
@@ -216,7 +216,7 @@ func buildDeployment(demo demov1.Demo) *v1.Deployment {
 					Containers: []corev1.Container{
 						{
 							Name:  "nginx",
-							Image: demo.Spec.Image,
+							Image: "busybox-fda",
 						},
 					},
 				},

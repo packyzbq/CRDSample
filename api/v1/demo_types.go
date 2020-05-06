@@ -29,10 +29,14 @@ type DemoSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of Demo. Edit Demo_types.go to remove/update
-	Strs     string `json:"foo,omitempty"`
-	Image    string `json:"image"`
-	Replicas int32  `json:"replicas"`
-	App      string `json: app`
+	DeployOld DeploySepc `json:"deployold"`
+	DeployNew DeploySepc `json:"deploynew"`
+}
+
+type DeploySepc struct {
+	Name     string `json:"name"`
+	Final    bool   `json:"final"`
+	Replicas int32  `json:"replicas,omitempty"`
 }
 
 // DemoStatus defines the observed state of Demo

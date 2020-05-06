@@ -1,12 +1,12 @@
 package controllers
 
 import (
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-type recontileRequest struct {
+type CrdRequest struct {
 	reconcile.Request
-	schema.GroupVersionKind
+	Kind   source.Kind
 	Action string
 }
