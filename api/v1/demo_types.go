@@ -20,6 +20,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	PhasePending = "PENDING"
+	PhaseRunning = "RUNNING"
+	PhaseDone    = "DONE"
+	PhaseError   = "ERROR"
+)
+
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
@@ -34,6 +41,7 @@ type DemoSpec struct {
 }
 
 type DeploySepc struct {
+	Type     string `json:"type"`
 	Name     string `json:"name"`
 	Final    bool   `json:"final"`
 	Replicas int32  `json:"replicas,omitempty"`
@@ -43,7 +51,7 @@ type DeploySepc struct {
 type DemoStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Status string `json:"status"`
+	Phase string `json:"phase,omitempty"`
 }
 
 // +kubebuilder:object:root=true

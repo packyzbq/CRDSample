@@ -18,11 +18,10 @@ package main
 
 import (
 	"flag"
-	"os"
-
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -66,13 +65,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.DemoReconciler{
+	err = (&controllers.DemoReconciler{
 		Client:   mgr.GetClient(),
 		Log:      ctrl.Log.WithName("controllers").WithName("Demo"),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("demo-controller"),
-	}).SetupWithManager(mgr); err != nil {
+	}).SetupWithManager(mgr)
+	if err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Demo")
+		os.Exit(1)
+	}
+
+	if err = (&controllers.IMeshReconciler{
+		Client:   mgr.GetClient(),
+		Log:      ctrl.Log.WithName("controllers").WithName("Imesh"),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("imesh-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Imesh")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

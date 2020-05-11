@@ -96,17 +96,13 @@ func (e *EnqueueRequestForCRD) Generic(evt event.GenericEvent, q workqueue.RateL
 		Name:      evt.Meta.GetName(),
 		Namespace: evt.Meta.GetNamespace(),
 	}}
-	kind, err := judgeKind(evt.Object)
-	if err != nil {
-		enqueueLog.Error(err, "Generic Event judge object error")
-		return
-	}
-	crdRequest := CrdRequest{
-		Request: request,
-		Kind:    kind,
-		Action:  "Generic",
-	}
-	q.Add(crdRequest)
+	//kind, err := judgeKind(evt.Object)
+	//if err != nil {
+	//	enqueueLog.Error(err, "Generic Event judge object error")
+	//	return
+	//}
+
+	q.Add(request)
 }
 
 func judgeKind(obj runtime.Object) (source.Kind, error) {
