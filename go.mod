@@ -1,4 +1,4 @@
-module github.com/CRDSample
+module github.com/packyzbq/CRDSample
 
 go 1.13
 
